@@ -1,0 +1,266 @@
+#+title: Todo
+
+* TODO Now [2/8]
+** TODO Combos [0/4]
+*** TODO Figure out what constitutes as score and how it increases
+*** TODO Cursor flame increases as score does
+*** TODO Display score and animate it similar to how Smash Bros. does it [0/3]
+**** TODO Display text on top right for example
+**** TODO Animation [0/2]
+Smash Bros. example: https://www.youtube.com/watch?v=TqsXl8rj5q0 (watch at 0.25x speed to see how they animate it)
+
+***** TODO Each number/glyph shakes as score increases
+***** TODO Flashes in and out of red/white
+** DONE Tree-sitter optimizations [0/0]
+*** DONE Run query cursor only on range of edited text
+*** DONE Incremental parsing [0/0]
+**** DONE Edits to text return an =Edit= struct
+***** DONE How do we actually propagate this information
+
+I see two places where we can give this responsibility:
+1. Rope
+2. Editor
+
+The rope usually keeps track of the TextPos and byte pos of text modifications.
+
+At the same time, sometimes we make modifications that are composed of calling multiple rope modification functions. Ideally, we'd like to merge these into a single edit.
+
+For example, inserting a newline in between opening + closing delimiters causes the text to be placed at increased indentation, and the closing delimiter to be put on a new, dedented line.
+
+Internally, we do this by inserting the text on increased indentation line, and then inserting closing delimiter on decreased indentation line. Two edits.
+
+It makes more sense to combine them. If we implement undo, we don't want the user to undo the closing delimiter insert, and then the text insert.
+
+On the other hand, there are definitely situations where an edit is simply composed of multiple, non-overlapping edits. For example, search and replace all matches in a file.
+
+***** DONE Insertions
+TSEdit properties:
+- start   => the point where the text was added
+- old_end => same as start
+- new_end => length of insertion
+***** DONE Deletions
+TSEdit properties:
+- start   => the start of the range of text to be deleted
+- old_end => the end of the range of text to be deleted
+- new_end => 0
+
+***** DONE Replacement
+TSEdit properties:
+- start   => the start of the range of text to be deleted
+- old_end => the end of the range of text to be deleted
+- new_end => the new end
+** TODO Command palette [/]
+*** TODO Minibuffer [/]
+Command palette appears in a minibuffer, heavily inspired by Doom Emacs.
+
+For now, just one single minibuffer.
+
+**** Minibuffer details
+
+The minibuffer contains:
+1. A text input
+2. List of results
+
+The first consideration is how the input should behave. Ideally, this text input should enable Vim keybindings. That then brings to rise the question of how we make that happen.
+
+Currently, all Vim keybindings / text editing operations are inside the =Editor= struct/module. However, it is designed specifically for a regular buffer of text.
+
+Some text editing operations simply don't map onto this minibuffer text input.
+
+For example, the `enter` key submits the input. There is only a single-line allowed.
+
+One question is whether or not we actually want this behaviour. Would it be nice to allow multi-line input? The view of the input starts as single line, and as the user adds newlines, it grows?
+
+There are a lot of questions that arise here. Note that the input is greatly simplified if we choose not to allow Vim keybindings.
+
+The main problem of allowing Vim keybindings is that it requires slight alterations to how the Vim commands are handled.
+
+Doom Emacs solves this by disallowing Vim in minibuffer inputs, same as VSCode.
+
+In zsh with Vi editing they take an interesting approach. Typically in terminal emulators, the =\= key is required to allow multiline input.
+
+With zsh + Vi, you can press =o= to create a new line, and each line will be interpreted as a separate command. On the UI, terminal emulators have their input at the bottom, so the text input grows upwards as newlines are added
+
+
+***** Current vim functionality
+- Move ::
+  Left, right, down, up, line start/end, wW/bB/eE, find, matching pair. All of these can stay the same.
+
+  When moving up and down, if going past text range, will go to option instead.
+
+- delete/change/yank ::
+  all of these can stay the same
+- insert ::
+  has to look for newline and avoid it
+
+  actually no, in emacs you can copy/paste and it adds newlines
+- insert newline ::
+  no op on minibuffer input mode
+- pressing enter ::
+  if the minibuffer selection allows for any arbitrary input, submits
+  otherwise enter does nothing until the user selects an option
+**** TODO
+
+** TODO Status line
+*** BRAINSTORM
+- what we want ::
+  - current file path relative to project root
+  - current line / col
+  - vim mode
+** TODO Font atlas refactor [3/6]
+*** DONE Use binpacking algorithm to reduce texture size
+Resources:
+- ghostty implementation
+- freetype-gl implementation
+- RectangleBinPack implementation
+*** DONE Split rasterization from atlas
+*** DONE Rebuild atlas when encountering new glyphs
+Couple things to note:
+- Building atlas is expensive (binpacking and actually producing the texture)
+- We should try to batch the work as much as possible
+- e.g. in a frame we should rebuild the atlas /once/
+- How can we do this? ::
+  Does rebuilding the atlas cause existing glyphs to have different texel coordinates?
+
+  I see two options:
+    1. Do a pass over all of the visible text, collect new glyphs, rebuild the atlas.
+    2. Rebuild the atlas as we build the text geometry
+
+    The first choice is optimal for scenarios where we encounter /a lot/ of new glyphs, avoiding recalculating the atlas multiple times.
+
+    The first choice means we will either construct the CoreText data structures: /CTLine, CTGlyphRun, etc./ twice, or we cache them in the function. Caching them doesn't sound like a bad option. We also call =.autorelease()= on these objects so memory wise it's also fine to cache.
+
+    Note: If it is inexpensive to /only/ recalculate the atlas, that is, /without/ creating the texture, then the choice probably doesn't matter.
+*** TODO Correct integer <-> float discrepancies [0/2]
+There are a couple places where there might be some discrepancies from converting integers <-> floats:
+**** TODO CGImage -> Atlas bitmap
+***** TODO GlyphInfo.rect.width/height are in floats but bitmap wants integers
+***** TODO Subtracting the origin
+**** TODO Certain font metrics
+
+*** TODO rewrite CGBitmapContextCreate to be nullable. Don't use ?CGContextRef though because that doesn't work
+*** TODO Text geometry resizing bug
+When we build text geometry, we iterate text line by line. On each line, we call =self.font.lookup_glyph_rects()= which will load each glyph from the line, adding any newly encountered glyphs to the atlas, and possibly causing the atlas to resize.
+
+If the atlas resizes, all the texcoords of vertices from previous lines will be invalid, since they will be normalized to the previous dimensions of the atlas.
+** TODO Comment syntax highlighting broken
+** TODO Sweep thru code for objc memory leaks
+there are probably lots of places where i am not freeing objc objects
+** DONE Diagnostics
+- Determine where to render diagnostics
+- Render diagnostics
+
+Problem: need the baseline of each line. How to get this information
+efficiently?
+
+Two things here:
+- Need to compute it. Where/when?
+  - Simple: compute in =Instance.from_text_vertices()= ::
+    It's not really needed elsewhere, so why bother with any place else?
+
+    We don't want to compute this for every char
+
+- Do we need to cache it? If so, where/when?
+* TODO Later [0/14]
+** TODO (perf) Cache diagnostics =LineBaseline= struct?
+** TODO (refactor) coalesce the text geometry building code for =build_text_geometry()= and =build_line_number_geometry()=
+** TODO (perf) only build line number geometry for lines we see
+** TODO (perf) only build text geometry for text we see?
+** TODO (bug) cursor on ligature glyph should render the regular glyph on top of cursor
+** TODO (feat) add new ligatures to atlas when encountered
+easiest to rebuild atlas from scratch again
+
+later can do this off main thread so rendering isn't interrupted
+** TODO (perf) don't render/rebuild geometry if not needed
+especially right now we rebuild all text when moving cursor as ez way to redraw cursor since it depends on text position
+
+now we this charIdxToVertexIdx map we create in create_text_geometry, we can save this and use it to get their
+vertices of a given char, so we can redraw the crusor without having to call =create_text_geometry= again.
+** TODO (perf) don't output existing glyphs in the atlas
+some ligatures like =//= and =///= reuse the same glyph
+but we are being lazy and not checking for this and adding redundant glyphs to the atlas
+** TODO (perf) move particle simulation to GPU [0/8]
+
+*** TODO create particle buffer as texture
+*** TODO draw =cluster_amount * CLUSTER_PARTICLE_COUNT= instances
+*** TODO each instance needs a direction
+*** TODO pass time to shader, need time for each cluster
+*** TODO in shader: calculate cluster index and particle index
+*** TODO compute opacity in shader
+*** TODO compute velocity in shader
+*** TODO explosions: need to reflect the new updates
+** TODO event loop or some mechanism to do work without stalling frame
+** TODO create deinit function for renderer/editor
+** TODO Egui for debugging?
+** TODO curves svg etc
+Good reosurce:
+https://phoboslab.org/log/2012/09/ejecta-2
+** TODO simd math data structures
+* TODO Brainstorm [0/14]
+** TODO improve particles with glow
+look at these: https://www.shadertoy.com/view/lldGzr
+** TODO lightning effect
+https://drilian.com/2009/02/25/lightning-bolts/
+
+https://www.shadertoy.com/view/3sXSD2
+
+https://github.com/mattdesl/lwjgl-basics/wiki/LightningEffect
+** TODO sound effects
+https://x.com/lightbulbfeed/status/1706441132992057604?s=20
+** TODO squiggly lines effect
+** TODO what to do with the background?
+*** TODO cool effect
+*** TODO what about showing documentation or diagrams, and easily hide code to flip back and forth
+** TODO radial menu for LSP code actions
+#+caption: like this but for LSP code actions
+[[~/roam/images/49c0bf097a7f7df4b9889ba826c36fea.jpg]]
+** TODO better theme changing UI
+lets you click on a piece of text, and a GUI pops up to edit the theme right there
+** TODO motion blur effect on scroll
+will make a VIM user look insanely fast and coo l
+** TODO preview VIM command
+for example pressing "d e", you can prefix with some key and it will show you a preview of what will happen (like a GitHub inline diff, similar to what emacs does when you do search and replace)
+** TODO drag around syntax nodes
+would be cool to do this, for example swapping order of parameters
+** TODO WPM bottom right
+** TODO screen crack when going too hard
+https://x.com/GrahamFleming_/status/1706356048821620907?s=20
+** TODO autocomplete suggestions slam onto the screen
+** TODO errors should burn
+https://x.com/xldenis/status/1706552511925002537?s=20
+* Archive
+** DONE bug: =cc= (change line) should preserve line and not delete it entirely
+** DONE vertex buffer no need to create each time
+instead check if <= to current, if so just append
+otherwise create new
+** DONE fire [0/0]
+*** DONE create buffer for fire particles
+*** DONE compute shader to compute fire position and color
+** DONE Bug bash [0/0]
+*** DONE selection rendering messed up
+*** DONE deleting text
+#+begin_src zig
+fn testFn(self: *Self) void {
+    switch (self) {
+        .Foo => {
+
+        },
+    }
+}
+#+end_src
+
+start selection on comma
+move to the =.= on the line with =.Foo=
+delete
+
+it crashes
+*** DONE backspacing on start of line fucked
+** DONE Fix cursor [0/0]
+*** DONE not in front of text
+*** DONE newline fucks it up
+** DONE next line is not starting at the right Y
+we use =max_glyph_h= as the Y advance
+but this is not correct
+it needs to take into account glyphs that have their y origin lower
+for example in the glyph 'y'
+i think this might be the 'descent' font metric
